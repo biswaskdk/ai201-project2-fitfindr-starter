@@ -12,7 +12,7 @@ import os
 
 import pytest
 
-from tools import search_listings, suggest_outfit, create_fit_card
+from tools import search_listings, suggest_outfit, create_fit_card, compare_price
 from utils.data_loader import get_example_wardrobe, get_empty_wardrobe
 
 needs_groq = pytest.mark.skipif(
@@ -96,3 +96,43 @@ def test_fit_card_varies():
     outfit = "Pair it with baggy jeans and chunky sneakers for a 90s look."
     cards = {create_fit_card(outfit, item) for _ in range(3)}
     assert len(cards) > 1
+
+
+# ── compare_price (stretch) ───────────────────────────────────────────────────
+
+def test_compare_price_returns_verdict():
+    item = search_listings("jeans")[0]
+    result = compare_price(item)
+    assert result["verdict"] in {"good deal", "fair", "overpriced", "unknown"}
+    assert result["item_price"] == item["price"]
+    assert isinstance(result["comparables"], list)
+
+
+def test_compare_price_unknown_when_no_comparables():
+    # A unique category with no other listings → can't judge, no exception.
+    item = {"id": "x", "category": "spacesuit", "style_tags": [], "price": 99.0}
+    result = compare_price(item)
+    assert result["verdict"] == "unknown"
+    assert result["sample_size"] < 2
+
+
+def test_compare_price_flags_cheap_item():
+    # An item priced far below comparable listings should read as a good deal.
+    item = search_listings("jacket")[0].copy()
+    item["price"] = 1.0
+    result = compare_price(item)
+    assert result["verdict"] in {"good deal", "unknown"}
+
+
+# ── style profile memory (stretch) ────────────────────────────────────────────
+
+def test_profile_save_and_load(tmp_path, monkeypatch):
+    import utils.profile as profile_mod
+
+    monkeypatch.setattr(profile_mod, "_PROFILE_PATH", str(tmp_path / "p.json"))
+    assert profile_mod.load_profile() is None          # nothing saved yet
+    saved = profile_mod.save_profile(get_example_wardrobe(), "loves grunge")
+    assert saved["preferences"] == "loves grunge"
+    loaded = profile_mod.load_profile()
+    assert loaded["preferences"] == "loves grunge"
+    assert loaded["wardrobe"]["items"]

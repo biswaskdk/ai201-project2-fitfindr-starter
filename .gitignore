@@ -1,6 +1,9 @@
 # API keys — never commit these
 .env
 
+# User-generated style profile (stretch feature)
+data/style_profile.json
+
 # Python
 __pycache__/
 *.py[cod]

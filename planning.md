@@ -143,29 +143,42 @@ it does not guess or raise.
 
 **How does your agent decide which tool to call next?**
 
-The loop is **rule-based and conditional** — it reacts to what each tool returns instead of
-blindly running a fixed sequence. State lives in the `session` dict.
+The loop is **intent-routed and conditional** — it first works out what the user actually
+wants, then runs only the tools that intent needs, reacting to what each tool returns. State
+lives in the `session` dict.
 
-1. **Parse** the query (see State Management → Parsing) into `{description, size, max_price}`.
+**Step 1 — Classify intent (hybrid).** `_classify_intent(query)` maps the query to one of four
+intents. Strong keyword signals resolve directly; ambiguous/conflicting queries fall back to an
+LLM classifier. The intent decides the tool plan:
+
+| Intent | Example query | Tools run |
+|--------|---------------|-----------|
+| `full` | "find me a vintage tee under $30" | search → [compare if price] → suggest → fitcard |
+| `outfit_only` | "give me an outfit idea" | suggest (from wardrobe) → fitcard |
+| `price_check` | "is this a good deal?" | search → compare |
+| `caption_only` | "write a caption for my look" | fitcard (from described look) |
+
+This is what makes tool selection conditional on context: an `outfit_only` request never calls
+`search_listings`; a `price_check` never calls the styling tools.
+
+**Step 2 — Execute the plan, branching on results.** For search-based intents (`full`,
+`price_check`):
+1. **Parse** the query into `{description, size, max_price}` (and detect price intent + intent).
 2. **Search** with `search_listings`.
-   - **If results are empty → retry-with-fallback** (stretch): re-run dropping the `size`
-     filter; if still empty, re-run dropping `max_price`; record what was loosened in
-     `session["adjustments"]`. *This branch is what makes the loop conditional rather than fixed.*
-   - If still empty after all fallbacks → set `session["error"]` with guidance and **stop**
-     (do not proceed to outfit/fit-card with empty input).
-3. **Select** the top-scored result → `session["selected_item"]`.
-4. **(Conditional) compare_price** (stretch): only when the user's query signals price
-   intent (mentions price, "deal", "worth it", "fair", or a budget). Result →
-   `session["price_verdict"]`. Skipped otherwise.
-5. **Suggest outfit** with `suggest_outfit(selected_item, wardrobe)`
-   → `session["outfit_suggestion"]`. Empty wardrobe handled inside the tool.
-6. **Create fit card** with `create_fit_card(outfit_suggestion, selected_item)`
-   → `session["fit_card"]`. Only runs if step 5 produced a non-empty suggestion.
-7. **Done** when `fit_card` is set (success) or `error` is set (early stop). Return `session`.
+   - **Empty → retry-with-fallback** (stretch): re-run dropping `size`, then dropping
+     `max_price`, recording each change in `session["adjustments"]`.
+   - Still empty after fallbacks → set `session["error"]` and **stop** (don't call the styling
+     tools on empty input).
+3. **Select** the top result → `session["selected_item"]`.
+4. **compare_price** (stretch) — for `price_check`, or in `full` when the query mentions price.
+5. **suggest_outfit** / 6. **create_fit_card** as the intent requires.
 
-**How it knows it's done:** the loop terminates when either `session["fit_card"]` or
-`session["error"]` is populated. There is no infinite loop — fallbacks are bounded (at most
-two retries), and each step is gated on the previous step's output.
+For no-search intents, `suggest_outfit` styles the wardrobe directly (`new_item=None`) and
+`create_fit_card` captions the described look (`new_item=None`).
+
+**How it knows it's done:** the loop terminates when the intent's final output is set, or when
+`session["error"]` is populated. No infinite loop — fallbacks are bounded (each loosened filter
+becomes `None`), and each step is gated on prior outputs.
 
 ---
 
