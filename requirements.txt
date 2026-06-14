@@ -1,4 +1,4 @@
 groq==0.15.0
 python-dotenv==1.0.1
-gradio>=6.9.0
+gradio>=5.50,<7
 pytest>=8.0.0
